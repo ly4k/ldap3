@@ -1380,9 +1380,26 @@ class Connection(object):
                         # within the AUTHENTICATE_MESSAGE (MS-NLMP 2.2.1.3). This new AV_PAIR has AvId 0x000A (MsvAvChannelBindings).
                         # The Value field contains an MD5 hash of a gss_channel_bindings_struct.
                         # The logic here is heavly inspired by "msldap", "minikerberos" and "asysocks" projects by @skelsec.
-                        from hashlib import sha256, md5
+                        from cryptography import x509
+                        from cryptography.hazmat.backends import default_backend
+                        from cryptography.exceptions import UnsupportedAlgorithm
+                        import hashlib
                         ntlm_client.tls_channel_binding = True
-                        peer_certificate_sha256 = sha256(self.server.tls.peer_certificate).digest()
+                        backend = default_backend()
+                        cert = x509.load_der_x509_certificate(self.server.tls.peer_certificate, backend)
+                        hash_algorithm = None
+                        try:
+                            hash_algorithm = cert.signature_hash_algorithm
+                        except UnsupportedAlgorithm:
+                            pass
+
+                        if not hash_algorithm or hash_algorithm.name in ["md5", "sha1"]:
+                            hash_func = hashlib.new('sha256')
+                        else:
+                            hash_func = hashlib.new(hash_algorithm.name)
+
+                        hash_func.update(self.server.tls.peer_certificate)
+                        peer_certificate_sha256 = hash_func.digest()
 
                         # https://datatracker.ietf.org/doc/html/rfc2744#section-3.11
                         channel_binding_struct = bytes()
@@ -1400,7 +1417,7 @@ class Connection(object):
 
                         # https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/83f5e789-660d-4781-8491-5f8c6641f75e
                         # "The Value field contains an MD5 hash of a gss_channel_bindings_struct"
-                        ntlm_client.client_av_channel_bindings = md5(channel_binding_struct).digest()
+                        ntlm_client.client_av_channel_bindings = hashlib.new('md5', channel_binding_struct).digest()
 
                     # as per https://msdn.microsoft.com/en-us/library/cc223501.aspx
                     # send a sicilyPackageDiscovery request (in the bindRequest)
